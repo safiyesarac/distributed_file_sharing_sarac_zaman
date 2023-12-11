@@ -62,9 +62,8 @@ def aggregate_file_lists():
         return {node_id: data['files'] for node_id, data in file_list_responses.items()}
 
 # Calculate SHA-256 hash of a file
-def calculate_file_hash(file_path):
-    with open(file_path, 'rb') as f:
-        return sha256(f.read()).hexdigest()
+def calculate_file_hash_from_content(file_content):
+    return sha256(file_content).hexdigest()
 
 # Function to send message to a specific RabbitMQ queue
 def send_message_to_queue(message, queue_name):
@@ -76,11 +75,17 @@ def send_message_to_queue(message, queue_name):
     channel.basic_publish(exchange='', routing_key=queue_name, body=message)
     connection.close()
 
+
+def is_coordinator():
+    global self_node_id, leader_node_id
+    return self_node_id == leader_node_id
+
+
 # Replicate file to other nodes
 def replicate_file(file_name, content):
     # Encode the binary content to base64 string
     base64_content = base64.b64encode(content).decode('utf-8')
-    file_hash = calculate_file_hash(os.path.join(file_dir, file_name))
+    file_hash = calculate_file_hash_from_content(content)
     
     replication_message = json.dumps({
         'action': 'replicate', 
@@ -91,7 +96,8 @@ def replicate_file(file_name, content):
 
     # Send the replication message to other nodes
     for server in participant_servers:
-        if server['node_id'] != self_node_id:
+        if server['node_id'] != self_node_id and (not is_coordinator() or server['node_id'] != leader_node_id):
+        
             send_message_to_queue(replication_message, f"file_operations_queue_{server['node_id']}")
 
 
@@ -99,14 +105,46 @@ def replicate_file(file_name, content):
 # Flask route for uploading files
 @app.route('/upload', methods=['POST'])
 def upload_file():
+    if not is_coordinator():
+        return jsonify({"error": "Uploads must be sent to the coordinator node"}), 403
+
     file = request.files['file']
     filename = file.filename
-    filepath = os.path.join(file_dir, filename)
-    file.save(filepath)
-    with open(filepath, 'rb') as f:
-        content = f.read()
-    threading.Thread(target=replicate_file, args=(filename, content)).start()
-    return jsonify({"message": "File uploaded successfully"}), 200
+    content = file.read()
+    file_size = len(content) / (1024 * 1024)  # Size in MB
+
+    # Request storage information from all nodes
+    request_storage_info_from_nodes()
+
+    # Wait for a brief period to collect storage info from nodes
+    time.sleep(5)
+
+    # Select nodes for replication
+    target_node_ids = select_nodes_for_replication(file_size)
+    if target_node_ids is None:
+        return jsonify({"error": "No suitable nodes found for file replication"}), 500
+
+    # Initiate file replication on selected nodes
+    for node_id in target_node_ids:
+        initiate_file_replication(filename, content, node_id)
+
+    return jsonify({"message": "File upload and replication initiated on multiple nodes"}), 200
+def initiate_file_replication(file_name, file_content, target_node_id):
+    # Encode the file content to base64 to ensure safe transmission through RabbitMQ
+    base64_content = base64.b64encode(file_content).decode('utf-8')
+    
+    # Prepare the replication message
+    replication_message = json.dumps({
+        'action': 'replicate',
+        'file_name': file_name,
+        'content': base64_content,  # Encoded file content
+        'hash': calculate_file_hash_from_content(file_content)
+    })
+
+    # Send the replication message to the target node's queue
+    send_message_to_queue(replication_message, f"file_operations_queue_{target_node_id}")
+
+
 
 # Flask route for downloading files
 @app.route('/download', methods=['GET'])
@@ -133,6 +171,9 @@ def list_files():
 
 # Handle replication request from other nodes
 def handle_replication_request(data):
+    if is_coordinator():
+        # Coordinator node does not store files
+        return
     file_path = os.path.join(file_dir, data['file_name'])
 
     # Decode the content from base64
@@ -141,7 +182,7 @@ def handle_replication_request(data):
     with open(file_path, 'wb') as f:
         f.write(content)
 
-    if calculate_file_hash(file_path) != data['hash']:
+    if calculate_file_hash_from_content(content)!= data['hash']:
         print(f"Consistency error in replicating {data['file_name']}")
 
 leader_node_id = None
@@ -194,19 +235,28 @@ def setup_rabbitmq(node_id):
     channel.queue_declare(queue=f'file_list_request_queue_{node_id}')
     channel.queue_declare(queue='file_list_response_queue')
     channel.queue_declare(queue=f'heartbeat_queue_{node_id}')
-
+    channel.queue_declare(queue=f'storage_info_request_queue_{node_id}')
     
+    channel.queue_declare(queue=f'storage_info_response_queue_{node_id}')
+   
   
     def callback(ch, method, properties, body):
         on_message_received(ch, method, properties, body, node_id)
 
     # Consume from queues
+    channel.basic_consume(queue=f'storage_info_request_queue_{node_id}', on_message_callback=callback, auto_ack=True)
+
     channel.basic_consume(queue=f'file_operations_queue_{node_id}', on_message_callback=callback, auto_ack=True)
     channel.basic_consume(queue='election_queue', on_message_callback=callback, auto_ack=True)
     channel.basic_consume(queue=f'leader_announcement_queue_{node_id}', on_message_callback=callback, auto_ack=True)
     channel.basic_consume(queue=f'file_list_request_queue_{node_id}', on_message_callback=callback, auto_ack=True)
-    channel.basic_consume(queue='file_list_response_queue', on_message_callback=callback, auto_ack=True)
+    if is_coordinator():
+        # Coordinator consumes file list responses
+        channel.basic_consume(queue='file_list_response_queue', on_message_callback=callback, auto_ack=True)
+
     channel.basic_consume(queue=f'heartbeat_queue_{node_id}', on_message_callback=callback, auto_ack=True)
+    channel.basic_consume(queue=f'storage_info_response_queue_{node_id}', on_message_callback=callback, auto_ack=True)
+
 
     channel.start_consuming()
     # Start Bully election and consuming messages
@@ -215,17 +265,36 @@ def setup_rabbitmq(node_id):
     channel.start_consuming()
    
 
-heartbeat_interval = 5  # seconds
-heartbeat_timeout = 15  # seconds
+heartbeat_interval = 180  # seconds
+heartbeat_timeout = 180*3  # seconds
 last_heartbeat = {}
 import time
-def send_heartbeat(node_id):
-    # Send a heartbeat message to all nodes
-    heartbeat_message = json.dumps({'node_id': node_id, 'type': 'heartbeat'})
-    for server in participant_servers:
-        if server['node_id'] != node_id:
-            send_message_to_queue(heartbeat_message, f"heartbeat_queue_{server['node_id']}")
+def send_heartbeat():
+    # Send a heartbeat message to the coordinator
+    global leader_node_id
+    if leader_node_id is None:
+        return  # Leader not defined yet
+
+    heartbeat_message = json.dumps({'node_id': self_node_id, 'type': 'heartbeat', 'sender': 'participant'})
+    send_message_to_queue(heartbeat_message, f"heartbeat_queue_{leader_node_id}")
+def start_participant_heartbeat():
+    while True:
+        send_heartbeat()
+        time.sleep(heartbeat_interval)
+
+def start_coordinator_heartbeat():
+    while True:
+        send_coordinator_heartbeat()
+        time.sleep(heartbeat_interval)
+
+
 #consistency and 
+def send_coordinator_heartbeat():
+    # Coordinator sends a heartbeat message to all participant nodes
+    heartbeat_message = json.dumps({'node_id': self_node_id, 'type': 'heartbeat', 'sender': 'coordinator'})
+    for server in participant_servers:
+        if server['node_id'] != self_node_id:
+            send_message_to_queue(heartbeat_message, f"heartbeat_queue_{server['node_id']}")
 
 def check_heartbeats(leader_node_id):
     # Check if any node missed sending heartbeats
@@ -235,16 +304,23 @@ def check_heartbeats(leader_node_id):
             print(f"Node {node_id} is not responding. Last heartbeat was at {last_time}")
             # Handle node failure, e.g., reassign tasks, replicate data, etc.
 
+
 def handle_heartbeat(message):
-    # Update the last heartbeat time for the node
     message_data = json.loads(message)
     node_id = message_data['node_id']
-    last_heartbeat[node_id] = time.time()
+    sender_type = message_data['sender']
 
-def start_heartbeat(node_id):
-    while True:
-        send_heartbeat(node_id)
-        time.sleep(heartbeat_interval)
+    if sender_type == 'coordinator':
+        # Handle heartbeat received from the coordinator
+        # Update some status or timestamp as needed
+        print(f"Heartbeat received from coordinator node {node_id}")
+    elif sender_type == 'participant':
+        # Handle heartbeat received from a participant
+        # This would typically be on the coordinator
+        last_heartbeat[node_id] = time.time()
+        print(f"Heartbeat received from participant node {node_id}")
+
+
 def handle_file_operation(message, node_id):
     # Parse the message
     message_data = json.loads(message)
@@ -299,17 +375,110 @@ def on_message_received(ch, method, properties, body, node_id):
         leader_node_id = int(message.split()[-1])
         if leader_node_id == node_id:
             request_file_list_from_nodes(node_id)
-    elif method.routing_key.startswith('file_list_request_queue'):
-        handle_file_list_request(node_id)
-    elif method.routing_key == 'file_list_response_queue':
-        if leader_node_id == node_id:
-            response_data = json.loads(message)
-            with file_list_responses_lock:
-                file_list_responses[response_data['node_id']] = response_data
+    if method.routing_key == 'file_list_response_queue' and is_coordinator():
+        # Handle file list response only on the coordinator
+        response_data = json.loads(body.decode())
+        with file_list_responses_lock:
+            file_list_responses[response_data['node_id']] = response_data
+            print(f"Received file list response from node {response_data['node_id']}")
+
+    if method.routing_key.startswith('file_list_request_queue'):
+        # Handle file list request on all nodes except coordinator
+        if not is_coordinator():
+            handle_file_list_request(node_id)
     if method.routing_key.startswith('heartbeat_queue'):
         handle_heartbeat(message)
     
-            
+    if method.routing_key == f'storage_info_request_queue_{node_id}':
+        handle_storage_info_request()
+    if method.routing_key == f'storage_info_response_queue_{node_id}':
+        handle_storage_info_message(body)
+ # Global dictionary to hold storage information of each node
+node_storage_info = {}
+
+import os
+import shutil
+def send_storage_info_to_coordinator(storage_info):
+    global rabbitmq_config, leader_node_id
+
+    if leader_node_id is None:
+        print("Leader node ID not set. Cannot send storage info.")
+        return
+
+    message = json.dumps({
+        'node_id': self_node_id,
+        'storage_info': storage_info
+    })
+
+    send_message_to_queue(message, f"storage_info_response_queue_{leader_node_id}")
+    print(f"Sending storage info to coordinator from node {self_node_id}: {storage_info}")
+
+
+def request_storage_info_from_nodes():
+    global participant_servers
+    for server in participant_servers:
+        if server['node_id'] != self_node_id:
+            send_message_to_queue("Request storage info", f"storage_info_request_queue_{server['node_id']}")
+
+def get_total_storage():
+    """ Returns the total storage capacity of the node in gigabytes. """
+    total, _, _ = shutil.disk_usage("/")
+    return total // (2**30)  # Convert bytes to gigabytes
+
+def get_used_storage():
+    """ Returns the used storage of the node in gigabytes. """
+    _, used, _ = shutil.disk_usage("/")
+    return used // (2**30)  # Convert bytes to gigabytes
+def calculate_storage_info():
+    total_storage = get_total_storage()
+    used_storage = get_used_storage()
+    return {
+        'total_storage': total_storage,
+        'used_storage': used_storage
+    }
+def select_nodes_for_replication(file_size, replication_factor=2):
+    suitable_nodes = []
+    for node_id, storage_info in node_storage_info.items():
+        print(node_storage_info)
+        available_storage = storage_info['total_storage'] - storage_info['used_storage']
+        print("Available storage " , available_storage)
+        if available_storage >= file_size:
+            suitable_nodes.append((node_id, available_storage))
+
+    print(f"Suitable nodes found: {suitable_nodes}")  # Debugging line
+
+    if len(suitable_nodes) < replication_factor:
+        print("Not enough suitable nodes found for replication.")  # Debugging line
+        return None
+
+    suitable_nodes.sort(key=lambda x: x[1], reverse=True)
+    selected_nodes = [node[0] for node in suitable_nodes[:replication_factor]]
+    print(f"Selected nodes for replication: {selected_nodes}")  # Debugging line
+    return selected_nodes
+    
+def on_coordinator_message_received(ch, method, properties, body):
+    message = json.loads(body.decode())
+    node_id = message['node_id']
+    storage_info = message['storage_info']
+
+    node_storage_info[node_id] = storage_info
+def handle_storage_info_message(body):
+    global node_storage_info
+    message_data = json.loads(body)
+    node_id = message_data['node_id']
+    storage_info = message_data['storage_info']
+
+    # Update the global storage info dictionary
+    node_storage_info[node_id] = storage_info
+    print(f"Updated storage info for node {node_id}: {storage_info}")
+  
+def handle_storage_info_request():
+    storage_info = calculate_storage_info()
+    send_storage_info_to_coordinator(storage_info)        
+def start_heartbeat(node_id):
+    while True:
+        send_heartbeat(node_id)
+        time.sleep(heartbeat_interval)  # Heartbeat interval in seconds
 
 def start_server(node_config, config):
     global self_node_id, file_dir, rabbitmq_config, participant_servers
@@ -329,11 +498,19 @@ def start_server(node_config, config):
     # Use the provided port number from the command-line argument
     flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=args.port))
     flask_thread.start()
-
+    
+    
     # Setup RabbitMQ for receiving replication requests and other inter-node communication
     rabbitmq_thread = threading.Thread(target=setup_rabbitmq, args=(self_node_id,))
     rabbitmq_thread.start()
     start_bully_election(self_node_id)
+    
+    if is_coordinator():
+        heartbeat_thread = threading.Thread(target=start_coordinator_heartbeat)
+    else:
+        heartbeat_thread = threading.Thread(target=start_participant_heartbeat)
+
+    heartbeat_thread.start()
 
 # Load configurations and start the server
 config = load_config()
