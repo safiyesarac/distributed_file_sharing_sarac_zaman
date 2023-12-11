@@ -1,0 +1,87 @@
+version: '2'
+
+services:
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf
+  #     - ./ssl/cert.pem:/etc/nginx/ssl/cert.pem
+  #     - ./ssl/key.pem:/etc/nginx/ssl/key.pem
+  #   depends_on:
+  #     - coordinator-server
+  #     - participant-server1
+  #     - participant-server2
+  #     - client
+  #   networks:
+  #     - file-sharing-network
+
+  # coordinator-server:
+  #   build: 
+  #     context: distributed_file_sharing
+  #     dockerfile: DockerFile
+  #   ports:
+  #     - "9000:8000"
+  #   networks:
+  #     - file-sharing-network
+  #   volumes:
+  #     - coordinator-data:/data
+  #   environment:
+  #     - RABBITMQ_HOST=rabbitmq
+  #     - NODE_ID=1 # Unique ID for Bully Algorithm
+
+  # participant-server1:
+  #   build: 
+  #     context: ./distributed_file_sharing
+  #     dockerfile: DockerFile
+  #   ports:
+  #     - "5000:8000"
+  #   networks:
+  #     - file-sharing-network
+  #   volumes:
+  #     - participant1-data:/data
+  #   environment:
+  #     - RABBITMQ_HOST=rabbitmq
+  #     - NODE_ID=2
+
+  # participant-server2:
+  #   build: 
+  #     context: ./distributed_file_sharing
+  #     dockerfile: DockerFile
+  #   ports:
+  #     - "4000:8000"
+  #   networks:
+  #     - file-sharing-network
+  #   volumes:
+  #     - participant2-data:/data
+  #   environment:
+  #     - RABBITMQ_HOST=rabbitmq
+  #     - NODE_ID=3
+
+  # client:
+  #   build: 
+  #     context: ./client
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "3000:80"
+  #   networks:
+  #     - file-sharing-network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    # networks:
+    #   - file-sharing-network
+    ports:
+      - "15672:15672"
+      - "5672:5672"
+
+# networks:
+#   file-sharing-network:
+#     driver: bridge
+
+# volumes:
+#   coordinator-data:
+#   participant1-data:
+#   participant2-data:
