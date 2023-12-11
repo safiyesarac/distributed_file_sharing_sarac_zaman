@@ -1,0 +1,31 @@
+{
+  
+    "rabbitmq": {
+      "host": "localhost",
+      "ip":"127.0.1.1",
+      "port": 5672
+    },
+  "participant_servers": [
+    {
+      "node_id": 1,
+      "host": "gulce-HP-Laptop",
+      "ip":"127.0.1.1",
+      "port": 9000,
+      "is_active": true
+    },
+    {
+      "node_id": 2,
+      "host": "localhost",
+      "ip":"127.0.1.1",
+      "port": 7000,
+      "is_active": true
+    },
+    {
+      "node_id": 3,
+      "host": "localhost",
+      "ip":"127.0.1.1",
+      "port": 6000,
+      "is_active": true
+    }
+  ]
+}
