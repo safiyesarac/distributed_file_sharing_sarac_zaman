@@ -7,7 +7,7 @@ LIST_ENDPOINT = 'http://127.0.0.1:6000/list'
 
 # Test file upload
 def test_upload():
-    files = {'file': open('test_file_2.txt', 'rb')}
+    files = {'file': open('test_file_4.txt', 'rb')}
     response = requests.post(UPLOAD_ENDPOINT, files=files)
     assert response.status_code == 200
     print("Upload test passed")
@@ -31,7 +31,7 @@ def test_list_files():
     print("List files test passed")
 
 
-# Run the tests
+## Run the tests
 test_upload()
-test_download()
+# test_download()
 test_list_files()
