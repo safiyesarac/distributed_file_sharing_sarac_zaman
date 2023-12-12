@@ -1,13 +1,12 @@
 import requests
 
 # Define the API endpoints
-UPLOAD_ENDPOINT = 'http://127.0.0.1:6000/upload'
-DOWNLOAD_ENDPOINT = 'http://127.0.0.1:6000/download'
-LIST_ENDPOINT = 'http://127.0.0.1:6000/list'
-
+UPLOAD_ENDPOINT = 'http://128.214.9.98:9000/upload'
+DOWNLOAD_ENDPOINT = 'http://128.214.9.98:9000/download'
+LIST_ENDPOINT = 'http://128.214.9.98:9000/list'
 # Test file upload
 def test_upload():
-    files = {'file': open('test_file_4.txt', 'rb')}
+    files = {'file': open('test_file_.txt', 'rb')}
     response = requests.post(UPLOAD_ENDPOINT, files=files)
     assert response.status_code == 200
     print("Upload test passed")
@@ -33,5 +32,5 @@ def test_list_files():
 
 ## Run the tests
 test_upload()
-# test_download()
+
 test_list_files()

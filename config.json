@@ -7,10 +7,17 @@
     },
   "participant_servers": [
     {
-      "node_id": 1,
+      "node_id": 4,
       "host": "gulce-HP-Laptop",
       "ip":"127.0.1.1",
       "port": 9000,
+      "is_active": true
+    },
+    {
+      "node_id": 3,
+      "host": "gulce-HP-Laptop",
+      "ip":"127.0.1.1",
+      "port": 8000,
       "is_active": true
     },
     {
@@ -21,7 +28,7 @@
       "is_active": true
     },
     {
-      "node_id": 3,
+      "node_id": 1,
       "host": "localhost",
       "ip":"127.0.1.1",
       "port": 6000,
