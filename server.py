@@ -32,7 +32,7 @@ def get_ip_address():
 def find_self_config(all_configs, ip_address):
     print(all_configs,ip_address)
     for config in all_configs['participant_servers']:
-        print("----------------------",config['ip'])
+        
         if config['ip'] == ip_address and config['port']==args.port:
             print("correct", config)
             return config
@@ -40,7 +40,13 @@ def find_self_config(all_configs, ip_address):
 file_list_responses = {}
 file_list_responses_lock = Lock()
 file_list_request_timeout = 10  # seconds
+election_timeout = 5  # seconds
+in_election_process = False
+election_response_received = False
 
+
+
+consensus_proposed_values = []
 def request_file_list_from_nodes(node_id):
     # Clear previous responses
     global file_list_responses
@@ -188,37 +194,55 @@ def handle_replication_request(data):
 leader_node_id = None
 
 def send_election_message(to_node_id):
-    print("election message sent")
     election_message = json.dumps({'type': 'election', 'from_node_id': self_node_id})
     send_message_to_queue(election_message, f"election_queue_{to_node_id}")
 leader_node_id = None
 
 def start_bully_election(current_node_id):
     print(f"Starting Bully election from node {current_node_id}")
-    global leader_node_id
+    global leader_node_id, in_election_process, election_response_received, consensus_proposed_values
     higher_nodes = [server for server in participant_servers if server['node_id'] > current_node_id]
+    # Start the election process
+    in_election_process = True
+    election_response_received = False
+    consensus_proposed_values = []  # Reset proposed values for a new election
 
-    if not higher_nodes:
-        leader_node_id = current_node_id
-        announce_leader(current_node_id)
-        return
-
+    # Send election messages to higher-ranked nodes
     for node in higher_nodes:
         send_election_message(node['node_id'])
-        # Wait for response or timeout
-        # ...
 
-def handle_election_message(from_node_id):
-    global leader_node_id
-    if self_node_id > from_node_id:
-        send_election_message(from_node_id)
-        start_bully_election(self_node_id)
+    # Wait for responses or timeout
+    start_time = time.time()
 
-def announce_leader(node_id):
-    for server in participant_servers:
-        if server['node_id'] != node_id:
-            send_message_to_queue(f"Leader {node_id}", f"leader_announcement_queue_{server['node_id']}")
+    while not election_response_received and (time.time() - start_time) < election_timeout:
+        time.sleep(0.1)
 
+    if election_response_received:
+        # Election was successful, and this node is not the leader
+        in_election_process = False
+        print(f"Node {self_node_id} lost the election.")
+    else:
+        # No response received, this node is the leader
+        leader_node_id = current_node_id
+
+        # Propose a consensus value (you can set it to a default value)
+        consensus_value = "ProposedConsensusValue"
+        consensus_proposed_values.append(consensus_value)
+
+        announce_leader(current_node_id)
+        print(f"Node {self_node_id} is the leader. Consensus Value: {consensus_value}")
+        # Log that consensus happened
+        print(f"Node {self_node_id}: Consensus happened. Applying changes... (for example, updating shared state)")
+
+        # Check if there are proposed consensus values from other nodes
+        if consensus_proposed_values:
+            # Determine the final consensus value (simple approach: use the leader's proposal)
+            final_consensus_value = consensus_proposed_values[0]
+            print(f"Final Consensus Value: {final_consensus_value}")
+
+        # Reset the election process variables
+        in_election_process = False
+        election_response_received = False
 
 # RabbitMQ and other inter-node communication setup
 def setup_rabbitmq(node_id):
@@ -229,7 +253,6 @@ def setup_rabbitmq(node_id):
     # Declare all the queues
     print(f"Setting up RabbitMQ for node {node_id}")
     channel.queue_declare(queue=f'file_operations_queue_{node_id}')
-    print(f"Queue declared: file_operations_queue_{node_id}")
     channel.queue_declare(queue='election_queue')
     channel.queue_declare(queue=f'leader_announcement_queue_{node_id}')
     channel.queue_declare(queue=f'file_list_request_queue_{node_id}')
@@ -351,11 +374,34 @@ def process_election_message(from_node_id, current_node_id):
         # Start a new election
         start_bully_election(current_node_id)
 
+def handle_election_message(from_node_id):
+    global leader_node_id
+    if self_node_id > from_node_id:
+        send_election_message(from_node_id)
+        start_bully_election(self_node_id)
+
 def announce_leader(node_id):
-    # Announce the current node as the leader to all nodes
+    global consensus_leader_node_id
+    consensus_leader_node_id = node_id
     for server in participant_servers:
         if server['node_id'] != node_id:
             send_message_to_queue(f"Leader {node_id}", f"leader_announcement_queue_{server['node_id']}")
+    print(f"Consensus reached: Node {node_id} is the leader!")
+
+
+def request_consensus_values_from_nodes(node_id):
+    # Request proposed consensus values from all other nodes
+    for server in participant_servers:
+        if server['node_id'] != node_id:
+            send_message_to_queue("Request consensus value", f"consensus_queue_{server['node_id']}")
+
+def handle_consensus_proposal(message):
+    # Handle proposed consensus value from another node
+    global consensus_proposed_values
+    consensus_value = message.split()[-1]
+    print(f"Received proposed consensus value: {consensus_value} from another node")
+    consensus_proposed_values.append(consensus_value)
+
 
 def on_message_received(ch, method, properties, body, node_id):
     print(f"Message received on node {node_id}, queue {method.routing_key}: {body.decode()}")
@@ -368,13 +414,24 @@ def on_message_received(ch, method, properties, body, node_id):
     if method.routing_key.startswith('file_operations_queue'):
         
         handle_file_operation(message, node_id)
-    elif method.routing_key == 'election_queue':
-        sender_node_id = int(message.split()[-1])
-        process_election_message(sender_node_id, node_id)
+    if method.routing_key == 'election_queue':
+        sender_node_id = int(body.decode().split()[-1])
+        handle_election_message(sender_node_id)
+        # Acknowledge the message
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
     elif method.routing_key.startswith('leader_announcement_queue'):
-        leader_node_id = int(message.split()[-1])
+        leader_node_id = int(body.decode().split()[-1])
+        print(f"Received leader announcement: {leader_node_id}")
         if leader_node_id == node_id:
-            request_file_list_from_nodes(node_id)
+            # Request proposed consensus values from other nodes
+            request_consensus_values_from_nodes(node_id)
+
+    elif method.routing_key.startswith('consensus_queue'):
+        # Handle proposed consensus value from another node
+        consensus_value = body.decode().split()[-1]
+        print(f"Received proposed consensus value: {consensus_value} from another node")
+        consensus_proposed_values.append(consensus_value)
     if method.routing_key == 'file_list_response_queue' and is_coordinator():
         # Handle file list response only on the coordinator
         response_data = json.loads(body.decode())
@@ -515,7 +572,6 @@ def start_server(node_config, config):
 # Load configurations and start the server
 config = load_config()
 ip_address = get_ip_address()
-print(ip_address)
 self_config = find_self_config(config, ip_address)
-print("******",self_config)
+print(self_config)
 start_server(self_config, config)
