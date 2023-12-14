@@ -7,8 +7,6 @@ Distributed File Sharing System
 
 
 
-https://github.com/safiyesarac/distributed_file_sharing_sarac_zaman/assets/66124396/642f0041-6449-4e24-bfc4-fea17f78ea22
-
 
 
 
