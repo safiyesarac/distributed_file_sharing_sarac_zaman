@@ -324,7 +324,10 @@ def download_file():
         return Response(file_content, mimetype='application/octet-stream')
     else:
         return jsonify({"error": "Failed to retrieve file"}), 500
-    
+
+# Define a timeout for file query responses (in seconds)
+file_query_timeout = 15
+ 
 def query_nodes_for_file(filename):
     query_message = json.dumps({'action': 'query_file', 'filename': filename})
     broadcast_message_to_all_nodes(query_message, 'file_query_queue')
@@ -377,15 +380,7 @@ def send_file_content_to_coordinator(file_content, filename):
 
 global received_file_content, file_content_received, filename_waiting_for
 filename_waiting_for = None
-def handle_file_data_message(ch, method, properties, body):
-    message = json.loads(body)
-    if message['action'] == 'file_data':
-        # Decode the file content from base64
-        file_content = base64.b64decode(message['content'])
-        return file_content  # This should be handled appropriately to make the content available for the download response
 
-    # Send to the coordinator's queue
-    send_message_to_queue(file_data_message, f'file_data_queue_{leader_node_id}')
 
     
 def handle_file_data_message(ch, method, properties, body):
@@ -396,6 +391,7 @@ def handle_file_data_message(ch, method, properties, body):
         # Decode the file content from base64
         received_file_content = base64.b64decode(message['content'])
         file_content_received.set()  # Signal that file content has been received
+        
 file_query_responses = {}
 def process_file_query_responses():
     best_node = None
@@ -713,15 +709,17 @@ last_heartbeat = {}
 
 
 def send_heartbeat():
-    # Send a heartbeat message to the coordinator
+    # Send a heartbeat message
     global leader_node_id
     if leader_node_id is None:
         return  # Leader not defined yet
 
     heartbeat_message = json.dumps(
         {'node_id': self_node_id, 'type': 'heartbeat', 'sender': 'participant'})
-    send_message_to_queue(
-        heartbeat_message, f"heartbeat_queue_{leader_node_id}")
+    for server in participant_servers:
+        if server['node_id'] != self_node_id:
+            send_message_to_queue(
+                heartbeat_message, f"heartbeat_queue_{server['node_id']}")
 
 
 def start_participant_heartbeat():
@@ -746,8 +744,10 @@ def send_coordinator_heartbeat():
             send_message_to_queue(
                 heartbeat_message, f"heartbeat_queue_{server['node_id']}")
 
-
 def check_heartbeats(leader_node_id):
+    global last_heartbeat, participant_servers
+    current_time = time.time()
+    failed_nodes = []
     # Check if any node missed sending heartbeats
     current_time = time.time()
     for node_id, last_time in last_heartbeat.items():
@@ -755,7 +755,21 @@ def check_heartbeats(leader_node_id):
             print(
                 f"Node {node_id} is not responding. Last heartbeat was at {last_time}")
             # Handle node failure, e.g., reassign tasks, replicate data, etc.
+            failed_nodes.append(node_id)
 
+    # Handle each failed node
+    for node_id in failed_nodes:
+        handle_node_failure(node_id)
+        
+def handle_node_failure(node_id):
+    global participant_servers, leader_node_id
+    # Remove the failed node from the list of participant servers
+    participant_servers = [server for server in participant_servers if server['node_id'] != node_id]
+
+    # If the failed node was the leader, initiate a re-election
+    if node_id == leader_node_id:
+        print(f"Leader node {node_id} failed. Initiating re-election.")
+        start_bully_election(self_node_id)
 
 def handle_heartbeat(message):
     message_data = json.loads(message)
