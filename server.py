@@ -95,7 +95,7 @@ def setup_discovery_queue(node_id):
 
 
 # Start Discovery Process
-broadcast_discovery()
+
 
 
 consensus_proposed_values = []
@@ -677,7 +677,7 @@ def setup_rabbitmq(node_id):
     channel.basic_consume(queue=f'file_query_queue_{node_id}', on_message_callback=handle_file_query_message, auto_ack=True)
     channel.basic_consume(queue=f'file_retrieve_queue_{node_id}', on_message_callback=handle_file_retrieve_message, auto_ack=True)
     channel.basic_consume(queue=f'file_data_queue_{self_node_id}', on_message_callback=handle_file_data_message, auto_ack=True)
-
+    setup_discovery_queue(self_node_id)
     # Consume from queues
     channel.basic_consume(
         queue=f'storage_info_request_queue_{node_id}', on_message_callback=callback, auto_ack=True)
@@ -894,7 +894,8 @@ def start_server(node_config, config):
         heartbeat_thread = threading.Thread(target=start_participant_heartbeat)
 
     heartbeat_thread.start()
-    setup_discovery_queue(self_node_id)
+    
+    broadcast_discovery()
 
 
 # Load configurations and start the server

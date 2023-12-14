@@ -1,9 +1,9 @@
 import requests
 
 # Define the API endpoints
-UPLOAD_ENDPOINT = 'http://128.214.9.98:9000/upload'
-DOWNLOAD_ENDPOINT = 'http://128.214.9.98:9000/download'
-LIST_ENDPOINT = 'http://128.214.9.98:9000/list'
+UPLOAD_ENDPOINT = 'http://localhost:9000/upload'
+DOWNLOAD_ENDPOINT = 'http://localhost:9000/download'
+LIST_ENDPOINT = 'http://localhost:9000/list'
 # Test file upload
 def test_upload():
     files = {'file': open('test_file_.txt', 'rb')}
@@ -31,6 +31,7 @@ def test_list_files():
 
 
 ## Run the tests
-test_upload()
+# test_upload()
 
-test_list_files()
+# test_list_files()
+test_download()
