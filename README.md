@@ -4,6 +4,10 @@
 ## Project Title
 Distributed File Sharing System
 
+https://github.com/safiyesarac/distributed_file_sharing_sarac_zaman/assets/66124396/abb8b2dd-2a28-4565-94e8-d3faa79ff69c
+
+
+
 ## Description
 This project involves the design and implementation of a distributed file-sharing system as part of the Distributed Systems course project for 2023. It focuses on creating a complex-enough distributed system with a running prototype on at least three separate nodes.
 
