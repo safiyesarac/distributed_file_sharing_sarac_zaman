@@ -85,7 +85,7 @@ def setup_discovery_queue(node_id):
 
     def discovery_callback(ch, method, properties, body):
         message = json.loads(body.decode())
-        if message['action'] == 'discover' and message['node_id'] != node_id:
+        if 'action' in message and message['action'] == 'discover' and message['node_id'] != node_id:
             response = json.dumps({'node_id': node_id})
             send_message_to_queue(response, discovery_queue)
 
@@ -495,8 +495,13 @@ def process_election_message(from_node_id, current_node_id):
 def handle_election_message(from_node_id):
     global leader_node_id
     if self_node_id > from_node_id:
+        # Respond and start own election
         send_election_message(from_node_id)
         start_bully_election(self_node_id)
+    else:
+        # Ignore if the node ID is lower
+        print(f"Node {self_node_id} ignoring election message from lower ID node {from_node_id}.")
+
 
 
 def announce_leader(node_id):
