@@ -4,10 +4,15 @@
 ## Project Title
 Distributed File Sharing System
 
+
+
+
+
+
+
 ## Description
 This project involves the design and implementation of a distributed file-sharing system as part of the Distributed Systems course project for 2023. It focuses on creating a complex-enough distributed system with a running prototype on at least three separate nodes.
 
-<video src='DS_Demo.mp4' width=180> </video>
 
 ## Features
 - Shared distributed state across nodes.
