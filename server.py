@@ -422,9 +422,34 @@ def retrieve_file_from_node(node_info, filename):
     return wait_for_file_content(filename)
 
 def receive_file_content_from_node(node_info, filename):
-    # Logic to receive the file content from the node
-    # This could involve setting up a temporary queue or using an existing one
-    pass
+    """
+    Receives the file content from a specified node.
+
+    :param node_info: Information about the node from which the file is to be retrieved.
+    :param filename: The name of the file to be retrieved.
+    """
+    # Assuming node_info contains the necessary details to connect to the node
+    node_id = node_info['node_id']
+
+    # Prepare the request message for file retrieval
+    request_message = json.dumps({'action': 'retrieve_file', 'filename': filename})
+
+    # Send the request to the specific node's queue for file retrieval
+    send_message_to_queue(request_message, f'file_retrieve_queue_{node_id}')
+
+    # Wait for the response with the file content
+    # Assuming there's a mechanism to wait and receive the file content
+    # This could be a blocking call until the file content is received or a timeout occurs
+    file_content = wait_for_file_content(filename)
+
+    if file_content:
+        # File content received successfully
+        return file_content
+    else:
+        # Handle the case where file content is not received (e.g., timeout or error)
+        print(f"Failed to receive file content for '{filename}' from node {node_id}")
+        return None
+
 def wait_for_file_content(filename):
     global file_content_received, received_file_content, filename_waiting_for
 
@@ -494,13 +519,13 @@ def process_election_message(from_node_id, current_node_id):
 
 def handle_election_message(from_node_id):
     global leader_node_id
-    if self_node_id > from_node_id:
+
         # Respond and start own election
-        send_election_message(from_node_id)
-        start_bully_election(self_node_id)
-    else:
+    send_election_message(from_node_id)
+    start_bully_election(self_node_id)
+
         # Ignore if the node ID is lower
-        print(f"Node {self_node_id} ignoring election message from lower ID node {from_node_id}.")
+        #print(f"Node {self_node_id} ignoring election message from lower ID node {from_node_id}.")
 
 
 
@@ -549,7 +574,7 @@ def start_bully_election(current_node_id):
     start_time = time.time()
 
     while not election_response_received and (time.time() - start_time) < election_timeout:
-        time.sleep(0.1)
+        time.sleep(0.5)
 
     if election_response_received:
         # Election was successful, and this node is not the leader
